@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from "react";
 
+// Helper function to format remaining time
+const formatRemainingTime = (seconds) => {
+  if (!seconds || seconds === 0) return "N/A";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  if (days > 0) return `${days} days, ${hours} hours`;
+  if (hours > 0) return `${hours} hours, ${minutes} minutes`;
+  return `${minutes} minutes`;
+};
+
 function Dashboard({
   account,
   connectWallet,
@@ -32,6 +44,23 @@ function Dashboard({
       for (const id of certIds) {
         try {
           const cert = await certificateContract.verifyCertificate(id);
+          // Get expiration status
+          let expirationStatus = {
+            isExpired: false,
+            expirationDate: null,
+            remainingTime: 0,
+          };
+          try {
+            expirationStatus = await certificateContract.getExpirationStatus(
+              id,
+            );
+          } catch (e) {
+            console.warn(
+              "Expiration status not available for certificate:",
+              id,
+            );
+          }
+
           certs.push({
             id: id.toString(),
             studentName: cert.studentName,
@@ -40,6 +69,15 @@ function Dashboard({
             issueDate: new Date(cert.issueDate * 1000).toLocaleDateString(),
             isRevoked: cert.isRevoked,
             ipfsHash: cert.ipfsHash,
+            expirationDate: expirationStatus.expirationDate
+              ? new Date(
+                  expirationStatus.expirationDate * 1000,
+                ).toLocaleDateString()
+              : "Never",
+            isExpired: expirationStatus.isExpired,
+            remainingTime: expirationStatus.remainingTime
+              ? formatRemainingTime(expirationStatus.remainingTime)
+              : "N/A",
           });
         } catch (e) {
           console.error("Error fetching certificate:", e);
@@ -186,9 +224,19 @@ function Dashboard({
                       >
                         <h3>Certificate #{cert.id}</h3>
                         <span
-                          className={`status-badge ${cert.isRevoked ? "revoked" : "valid"}`}
+                          className={`status-badge ${
+                            cert.isRevoked
+                              ? "revoked"
+                              : cert.isExpired
+                              ? "expired"
+                              : "valid"
+                          }`}
                         >
-                          {cert.isRevoked ? "Revoked" : "Valid"}
+                          {cert.isRevoked
+                            ? "Revoked"
+                            : cert.isExpired
+                            ? "Expired"
+                            : "Valid"}
                         </span>
                       </div>
                       <div style={{ marginTop: "1rem", lineHeight: "1.8" }}>
@@ -306,13 +354,19 @@ function Dashboard({
                       >
                         <h3>Land #{land.id}</h3>
                         <span
-                          className={`status-badge ${land.isDisputed ? "revoked" : land.isActive ? "valid" : "invalid"}`}
+                          className={`status-badge ${
+                            land.isDisputed
+                              ? "revoked"
+                              : land.isActive
+                              ? "valid"
+                              : "invalid"
+                          }`}
                         >
                           {land.isDisputed
                             ? "Disputed"
                             : land.isActive
-                              ? "Active"
-                              : "Inactive"}
+                            ? "Active"
+                            : "Inactive"}
                         </span>
                       </div>
                       <div style={{ marginTop: "1rem", lineHeight: "1.8" }}>

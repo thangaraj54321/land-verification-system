@@ -25,10 +25,34 @@ import {
   useLocation,
 } from "react-router-dom";
 
-// Contract addresses - Update after deployment
-const CERTIFICATE_REGISTRY_ADDRESS =
-  "0x5FbDB2315678afecb367f032d93F642f64180aa3";
-const LAND_REGISTRY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+// Backend API URL
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3000";
+
+// Contract addresses - loaded from backend API or use defaults
+let CERTIFICATE_REGISTRY_ADDRESS = "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6";
+let LAND_REGISTRY_ADDRESS = "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318";
+
+// Fetch contract addresses from backend
+const fetchContractAddresses = async () => {
+  try {
+    const response = await fetch(`${API_URL}/api/contracts`);
+    const data = await response.json();
+    if (data.success && data.data) {
+      if (data.data.certificateRegistry) {
+        CERTIFICATE_REGISTRY_ADDRESS = data.data.certificateRegistry;
+      }
+      if (data.data.landRegistry) {
+        LAND_REGISTRY_ADDRESS = data.data.landRegistry;
+      }
+      console.log("Contract addresses loaded from backend:", {
+        certificateRegistry: CERTIFICATE_REGISTRY_ADDRESS,
+        landRegistry: LAND_REGISTRY_ADDRESS,
+      });
+    }
+  } catch (error) {
+    console.log("Using default contract addresses:", error.message);
+  }
+};
 
 function App() {
   const [account, setAccount] = useState(null);
@@ -44,6 +68,9 @@ function App() {
 
   const initWeb3 = async () => {
     try {
+      // First fetch contract addresses from backend
+      await fetchContractAddresses();
+      
       if (window.ethereum) {
         // Use Web3Provider for ethers v5
         const ethersProvider = new ethers.providers.Web3Provider(window.ethereum);

@@ -88,6 +88,40 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Get contract addresses
+app.get("/api/contracts", (req, res) => {
+  try {
+    const configPath = path.join(__dirname, "..", "config", "contract-addresses.json");
+    if (fs.existsSync(configPath)) {
+      const configData = fs.readFileSync(configPath, "utf8");
+      const config = JSON.parse(configData);
+      res.json({
+        success: true,
+        data: {
+          certificateRegistry: config.certificateRegistry,
+          landRegistry: config.landRegistry,
+          network: config.network,
+        },
+      });
+    } else {
+      res.json({
+        success: true,
+        data: {
+          certificateRegistry: process.env.CERTIFICATE_REGISTRY_ADDRESS || "",
+          landRegistry: process.env.LAND_REGISTRY_ADDRESS || "",
+          network: "localhost",
+        },
+      });
+    }
+  } catch (error) {
+    console.error("Error reading contract addresses:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to retrieve contract addresses",
+    });
+  }
+});
+
 // Upload file to IPFS
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {

@@ -273,6 +273,11 @@ body {
   color: #92400e;
 }
 
+.status-badge.expired {
+  background: #fed7aa;
+  color: #c2410c;
+}
+
 /* Grid Layouts */
 .grid {
   display: grid;

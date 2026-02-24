@@ -3,6 +3,7 @@ pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 /**
  * @title CertificateRegistry
@@ -18,6 +19,7 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         string degree;
         string specialization;
         uint256 issueDate;
+        uint256 expirationDate; // 0 means never expires
         string ipfsHash;
         bool isRevoked;
         address issuer;
@@ -79,6 +81,10 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
     event CertificateRevoked(uint256 indexed id);
     event IssuerAuthorized(address indexed issuer);
     event IssuerRevoked(address indexed issuer);
+    event CertificateRenewed(
+        uint256 indexed certificateId,
+        uint256 newExpirationDate
+    );
 
     // Template Events
     event TemplateCreated(
@@ -161,6 +167,7 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
      * @param _specialization Specialization or stream
      * @param _ipfsHash IPFS hash of the certificate document
      * @param _templateId Template ID used (0 for no template)
+     * @param _expirationDuration Duration in seconds until expiration (0 = never expires)
      */
     function issueCertificate(
         address _studentAddress,
@@ -169,7 +176,8 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         string memory _degree,
         string memory _specialization,
         string memory _ipfsHash,
-        uint256 _templateId
+        uint256 _templateId,
+        uint256 _expirationDuration
     ) external onlyAuthorizedIssuer nonReentrant {
         require(
             _studentAddress != address(0),
@@ -203,6 +211,14 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
             );
         }
 
+        // Validate expiration duration against maximum allowed
+        if (_expirationDuration > 0) {
+            require(
+                _expirationDuration <= MAX_RENEWAL_DURATION,
+                "CertificateRegistry: Duration exceeds maximum allowed"
+            );
+        }
+
         Certificate storage cert = certificates[nextCertificateId];
         cert.id = nextCertificateId;
         cert.studentAddress = _studentAddress;
@@ -211,6 +227,9 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         cert.degree = _degree;
         cert.specialization = _specialization;
         cert.issueDate = block.timestamp;
+        cert.expirationDate = _expirationDuration > 0
+            ? block.timestamp + _expirationDuration
+            : 0;
         cert.ipfsHash = _ipfsHash;
         cert.isRevoked = false;
         cert.issuer = msg.sender;
@@ -254,6 +273,7 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
             string memory degree,
             string memory specialization,
             uint256 issueDate,
+            uint256 expirationDate,
             string memory ipfsHash,
             bool isRevoked,
             address issuer,
@@ -273,6 +293,7 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
             cert.degree,
             cert.specialization,
             cert.issueDate,
+            cert.expirationDate,
             cert.ipfsHash,
             cert.isRevoked,
             cert.issuer,
@@ -335,7 +356,10 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         uint256 _id
     ) external view returns (bool isValid) {
         if (_id > 0 && _id < nextCertificateId) {
-            isValid = !certificates[_id].isRevoked;
+            Certificate memory cert = certificates[_id];
+            // Valid if not revoked AND (never expires OR not yet expired)
+            isValid = !cert.isRevoked && 
+                (cert.expirationDate == 0 || block.timestamp < cert.expirationDate);
         }
     }
 
@@ -624,6 +648,7 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
      * @param _specialization Specialization (if enabled in template)
      * @param _ipfsHash IPFS hash of certificate document
      * @param _templateId ID of the template to use
+     * @param _expirationDuration Validity duration in seconds (0 = never expires)
      */
     function issueCertificateWithTemplate(
         address _studentAddress,
@@ -631,7 +656,8 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         string memory _degree,
         string memory _specialization,
         string memory _ipfsHash,
-        uint256 _templateId
+        uint256 _templateId,
+        uint256 _expirationDuration
     ) external onlyAuthorizedIssuer nonReentrant {
         require(
             _templateId > 0 && _templateId < nextTemplateId,
@@ -640,6 +666,10 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         require(
             templates[_templateId].isActive,
             "CertificateRegistry: Template is inactive"
+        );
+        require(
+            _expirationDuration <= MAX_RENEWAL_DURATION,
+            "CertificateRegistry: Duration exceeds maximum allowed"
         );
 
         CertificateTemplate memory template = templates[_templateId];
@@ -656,6 +686,10 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         cert.isRevoked = false;
         cert.issuer = msg.sender;
         cert.templateId = _templateId;
+        // Set expiration date (0 = never expires)
+        cert.expirationDate = _expirationDuration > 0
+            ? block.timestamp + _expirationDuration
+            : 0;
 
         studentCertificates[_studentAddress].push(nextCertificateId);
 
@@ -677,5 +711,144 @@ contract CertificateRegistry is Ownable, ReentrancyGuard {
         );
 
         nextCertificateId++;
+    }
+
+    // ==========================================
+    // Certificate Expiration & Renewal Functions
+    // ==========================================
+
+    /**
+     * @dev Check if a certificate is expired
+     * @param _certificateId ID of the certificate
+     * @return True if certificate is expired
+     */
+    function isCertificateExpired(
+        uint256 _certificateId
+    ) external view returns (bool) {
+        require(
+            _certificateId < nextCertificateId,
+            "CertificateRegistry: Certificate does not exist"
+        );
+        Certificate memory cert = certificates[_certificateId];
+        if (cert.expirationDate == 0) {
+            return false; // Never expires
+        }
+        return block.timestamp > cert.expirationDate;
+    }
+
+    /**
+     * @dev Get the expiration status of a certificate
+     * @param _certificateId ID of the certificate
+     * @return isExpired - Whether the certificate is expired
+     * @return expirationDate - The expiration timestamp (0 if never expires)
+     * @return remainingTime - Seconds remaining until expiration (0 if expired or never expires)
+     */
+    function getExpirationStatus(
+        uint256 _certificateId
+    )
+        external
+        view
+        returns (bool isExpired, uint256 expirationDate, uint256 remainingTime)
+    {
+        require(
+            _certificateId < nextCertificateId,
+            "CertificateRegistry: Certificate does not exist"
+        );
+        Certificate memory cert = certificates[_certificateId];
+
+        if (cert.expirationDate == 0) {
+            return (false, 0, 0); // Never expires
+        }
+
+        bool expired = block.timestamp > cert.expirationDate;
+        uint256 remaining = expired ? 0 : cert.expirationDate - block.timestamp;
+
+        return (expired, cert.expirationDate, remaining);
+    }
+
+    // Maximum renewal duration: 10 years
+    uint256 public constant MAX_RENEWAL_DURATION = 365 days * 10;
+
+    /**
+     * @dev Renew an expired or expiring certificate
+     * @param _certificateId ID of the certificate to renew
+     * @param _newDuration New validity duration in seconds from renewal time
+     */
+    function renewCertificate(
+        uint256 _certificateId,
+        uint256 _newDuration
+    ) external onlyAuthorizedIssuer nonReentrant {
+        require(
+            _certificateId > 0 && _certificateId < nextCertificateId,
+            "CertificateRegistry: Certificate does not exist"
+        );
+        require(
+            _newDuration > 0,
+            "CertificateRegistry: Duration must be greater than 0"
+        );
+        require(
+            _newDuration <= MAX_RENEWAL_DURATION,
+            "CertificateRegistry: Duration exceeds maximum allowed"
+        );
+
+        Certificate storage cert = certificates[_certificateId];
+        require(
+            !cert.isRevoked,
+            "CertificateRegistry: Cannot renew a revoked certificate"
+        );
+        // Allow original issuer or contract owner to renew
+        require(
+            cert.issuer == msg.sender || msg.sender == owner(),
+            "CertificateRegistry: Only original issuer or owner can renew"
+        );
+
+        // Update expiration date
+        cert.expirationDate = block.timestamp + _newDuration;
+
+        _recordTransaction(
+            "RENEWED",
+            _certificateId,
+            msg.sender,
+            cert.studentAddress,
+            string(abi.encodePacked("Renewed for ", Strings.toString(_newDuration), " seconds"))
+        );
+
+        emit CertificateRenewed(_certificateId, cert.expirationDate);
+    }
+
+    /**
+     * @dev Make a certificate never expire
+     * @param _certificateId ID of the certificate
+     */
+    function makeCertificatePermanent(
+        uint256 _certificateId
+    ) external onlyAuthorizedIssuer nonReentrant {
+        require(
+            _certificateId > 0 && _certificateId < nextCertificateId,
+            "CertificateRegistry: Certificate does not exist"
+        );
+
+        Certificate storage cert = certificates[_certificateId];
+        require(
+            !cert.isRevoked,
+            "CertificateRegistry: Cannot modify a revoked certificate"
+        );
+        // Allow contract owner or original issuer to make permanent
+        require(
+            cert.issuer == msg.sender || msg.sender == owner(),
+            "CertificateRegistry: Only original issuer or owner can make permanent"
+        );
+
+        cert.expirationDate = 0; // 0 means never expires
+
+        _recordTransaction(
+            "MADE_PERMANENT",
+            _certificateId,
+            msg.sender,
+            cert.studentAddress,
+            "Certificate made permanent"
+        );
+
+        emit CertificateRenewed(_certificateId, 0);
     }
 }
