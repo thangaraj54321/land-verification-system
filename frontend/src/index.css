@@ -1,4 +1,4 @@
-/* Global Styles */
+oo/* Global Styles */
 :root {
   --primary-color: #4f46e5;
   --primary-dark: #4338ca;
@@ -370,7 +370,7 @@ body {
 .footer {
   background: var(--text-primary);
   color: white;
-  padding: 2rem;
+  padding: 3rem;
   text-align: center;
   margin-top: auto;
 }
